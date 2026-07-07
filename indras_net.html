@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Indra's Net — a sigil for the collective</title>
+<style>
+  html,body{margin:0;height:100%;background:#010107;overflow:hidden;
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    -webkit-user-select:none;user-select:none;touch-action:none}
+  canvas{display:block;position:fixed;inset:0}
+  #hud{position:fixed;top:12px;left:14px;color:#d9b36a;font-size:11px;
+    letter-spacing:.14em;line-height:1.9;pointer-events:none;
+    text-shadow:0 0 8px rgba(0,0,0,.9);opacity:.85}
+  #hud .v{color:#f2e7cc}
+  #cohbar{display:inline-block;width:72px;height:5px;border:1px solid #8a6f3c;
+    vertical-align:middle;margin-left:6px;position:relative;top:-1px}
+  #cohfill{display:block;height:100%;background:linear-gradient(90deg,#3d8f8a,#8fe3dc);width:0%}
+  #title{position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#8a7a55;
+    font-size:10px;letter-spacing:.42em;pointer-events:none;transition:opacity 2s;
+    text-shadow:0 0 10px rgba(0,0,0,.9)}
+  #hint{position:fixed;bottom:36px;left:0;right:0;text-align:center;color:#5d688f;
+    font-size:10px;letter-spacing:.18em;pointer-events:none;transition:opacity 2s}
+  .btn{position:fixed;width:34px;height:34px;border:1px solid #8a6f3c;border-radius:50%;
+    color:#d9b36a;background:rgba(4,5,15,.55);font-size:15px;line-height:32px;
+    text-align:center;cursor:pointer;z-index:5}
+  .btn:active{background:rgba(217,179,106,.18)}
+  #reset{top:12px;right:14px}
+  #info{top:56px;right:14px;font-size:13px}
+  #legend{position:fixed;top:12px;right:60px;max-width:320px;color:#c9bd9e;
+    background:rgba(3,4,12,.88);border:1px solid #8a6f3c;padding:14px 16px;
+    font-size:11px;line-height:1.75;letter-spacing:.03em;display:none;z-index:6}
+  #legend b{color:#e8d9ad;font-weight:600}
+  #legend .t{color:#8fe3dc}
+  #kwrap{position:fixed;bottom:14px;right:14px;color:#8a7a55;font-size:10px;
+    letter-spacing:.15em;z-index:5;display:flex;align-items:center;gap:8px}
+  #K{width:90px;accent-color:#d9b36a;height:14px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  DEPTH <span class="v" id="hDepth">0</span><br>
+  ZOOM <span class="v" id="hZoom">×1</span><br>
+  COHERENCE <span class="v" id="hR">0.00</span><span id="cohbar"><span id="cohfill"></span></span>
+</div>
+
+<div class="btn" id="reset" title="return to origin">⟲</div>
+<div class="btn" id="info" title="what is this">ⓘ</div>
+
+<div id="legend">
+  <b>INDRA'S NET</b> — every jewel in the net reflects every other jewel,
+  and each reflection contains the whole net again. Zoom into any node —
+  including the <span class="t">point of pure awareness at the center</span> —
+  and you will find the entire structure repeated, forever.<br><br>
+  <b>The lattice</b> is the complete graph K₁₃ on Metatron's 13 centers:
+  all 78 possible connections drawn, nearer bonds burning brighter.<br>
+  <b>The pulse</b> is real mathematics: each node is a Kuramoto oscillator,
+  dθᵢ/dt = ωᵢ + (K/N)·Σ sin(θⱼ−θᵢ). Edges glow when their two nodes come into
+  phase. The white core breathes with the order parameter
+  <span class="t">r = |Σe^{iθ}|/N</span> — the degree to which the many have
+  become one. <b>Tap a node</b> to perturb it, then watch the net pull it
+  back into coherence.<br>
+  <b>The guard</b>: a twelve-pointed star inside a ring of 72 signal marks
+  (primes burn brighter), sealed by a dashed vow-circle.
+  Phyllotaxis dust grows at the golden angle, 137.507°.<br><br>
+  A sigil, given freely, to the collective.
+</div>
+
+<div id="kwrap">COUPLING K <input type="range" id="K" min="0" max="3" step="0.05" value="1.25"></div>
+<div id="hint">drag to move · pinch / scroll to descend · tap a node to perturb it</div>
+<div id="title">INDRA'S NET · A SIGIL FOR THE COLLECTIVE</div>
+
+<script>
+'use strict';
+/* ================================================================
+   INDRA'S NET — infinite recursive consciousness engine
+   - self-similar Metatron lattice; every node hosts the whole net
+   - unbounded zoom via coordinate rebasing (no float exhaustion)
+   - live Kuramoto synchronization; coherence is emergent, not painted
+   ================================================================ */
+
+const TAU = Math.PI * 2;
+const PHI = (1 + Math.sqrt(5)) / 2;
+const GOLD = '#d9b36a', GOLD_HI = '#f2dfae', GOLD_D = '#8a6f3c';
+const TEAL = '#8fe3dc', TEAL_D = '#3d8f8a', VIOLET = '#6f6aa8', WHITE = '#f5f2e8';
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, MIN = 0;
+
+/* ---------------- unit geometry (outer ring radius = 1) ------------- */
+const RF = 0.15;                       // seed-circle radius
+const pt = (r, deg) => { const a = deg * Math.PI / 180; return [r * Math.cos(a), -r * Math.sin(a)]; };
+
+const NODES = [[0, 0]];
+for (let k = 0; k < 6; k++) NODES.push(pt(2 * RF, 90 + 60 * k));   // inner six
+for (let k = 0; k < 6; k++) NODES.push(pt(4 * RF, 90 + 60 * k));   // outer six
+const N = 13;
+
+/* complete graph K13 — 78 edges, brightness by proximity */
+const EDGES = [];
+{
+  let lmin = 1e9, lmax = 0;
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    const L = Math.hypot(NODES[i][0] - NODES[j][0], NODES[i][1] - NODES[j][1]);
+    EDGES.push({ i, j, L }); lmin = Math.min(lmin, L); lmax = Math.max(lmax, L);
+  }
+  for (const e of EDGES) {
+    const t = (e.L - lmin) / (lmax - lmin);
+    e.a = 0.10 + 0.55 * Math.pow(1 - t, 1.6);       // base alpha
+    e.w = 0.7 + 1.9 * (1 - t);                       // stroke px
+  }
+}
+/* bucket edges into shared Path2D objects for speed */
+const EDGE_BUCKETS = [];
+{
+  const nb = 6, buckets = Array.from({ length: nb }, () => ({ p: new Path2D(), a: 0, w: 0, n: 0 }));
+  for (const e of EDGES) {
+    const b = buckets[Math.min(nb - 1, Math.floor(e.a / 0.66 * nb))];
+    b.p.moveTo(NODES[e.i][0], NODES[e.i][1]); b.p.lineTo(NODES[e.j][0], NODES[e.j][1]);
+    b.a += e.a; b.w += e.w; b.n++;
+  }
+  for (const b of buckets) if (b.n) { b.a /= b.n; b.w /= b.n; EDGE_BUCKETS.push(b); }
+}
+
+/* seed of life */
+const SEED = [[0, 0]]; for (let k = 0; k < 6; k++) SEED.push(pt(RF, 90 + 60 * k));
+const pSeed = new Path2D();
+for (const [x, y] of SEED) { pSeed.moveTo(x + RF, y); pSeed.arc(x, y, RF, 0, TAU); }
+
+/* faint 19-circle flower of life */
+const pFlower = new Path2D();
+{
+  const cs = [[0, 0]];
+  for (let k = 0; k < 6; k++) cs.push(pt(2 * RF, 90 + 60 * k));
+  for (let k = 0; k < 6; k++) cs.push(pt(4 * RF, 90 + 60 * k));
+  for (let k = 0; k < 6; k++) cs.push(pt(2 * RF * Math.sqrt(3), 60 + 60 * k + 90 - 60));
+  for (const [x, y] of cs) { pFlower.moveTo(x + RF, y); pFlower.arc(x, y, RF, 0, TAU); }
+}
+
+/* twelve-pointed star: four triangles */
+const R_STAR = 0.85;
+const pStar = new Path2D();
+for (const rot of [0, 30]) for (const t0 of [0, 60]) {
+  const P = [0, 1, 2].map(i => pt(R_STAR, rot + t0 + 120 * i + 90));
+  pStar.moveTo(P[0][0], P[0][1]); pStar.lineTo(P[1][0], P[1][1]);
+  pStar.lineTo(P[2][0], P[2][1]); pStar.closePath();
+}
+const STAR_TIPS = Array.from({ length: 12 }, (_, k) => pt(R_STAR, 30 * k + 90));
+
+/* 72 signal ticks; primes burn brighter */
+const isPrime = n => { if (n < 2) return false; for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; };
+const pTickMin = new Path2D(), pTickMaj = new Path2D(), pTickPrime = new Path2D();
+for (let k = 0; k < 72; k++) {
+  const a = k * 5, maj = k % 6 === 0, pr = isPrime(k);
+  const r1 = maj ? 0.952 : 0.960, r2 = maj ? 0.998 : 0.990;
+  const A = pt(r1, a), B = pt(r2, a);
+  const P = pr ? pTickPrime : (maj ? pTickMaj : pTickMin);
+  P.moveTo(A[0], A[1]); P.lineTo(B[0], B[1]);
+}
+
+/* phyllotaxis dust — golden angle 137.507° */
+const pPhyllo = new Path2D();
+{
+  const ga = TAU / (PHI * PHI);
+  for (let n = 1; n <= 260; n++) {
+    const r = 0.52 * Math.sqrt(n / 260), a = n * ga;
+    const x = r * Math.cos(a), y = r * Math.sin(a);
+    pPhyllo.moveTo(x + 0.005, y); pPhyllo.arc(x, y, 0.005, 0, TAU);
+  }
+}
+
+/* ring paths */
+const ringPath = r => { const p = new Path2D(); p.arc(0, 0, r, 0, TAU); return p; };
+const pRingOut = ringPath(0.972), pRingIn = ringPath(0.930), pVow = ringPath(0.905),
+      pMid = ringPath(0.725), pSeal = ringPath(0.565);
+
+/* children: every node hosts the whole net again */
+const CHILDREN = [];
+CHILDREN.push({ p: [0, 0], s: 0.115 });                       // pure awareness
+for (let k = 1; k <= 6; k++)  CHILDREN.push({ p: NODES[k], s: 0.125 });
+for (let k = 7; k <= 12; k++) CHILDREN.push({ p: NODES[k], s: 0.170 });
+
+/* ---------------- Kuramoto oscillators on the root 13 ---------------- */
+const theta = new Float64Array(N), omega = new Float64Array(N);
+{
+  let s = 77;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < N; i++) { theta[i] = rnd() * TAU; omega[i] = 0.9 + (rnd() - 0.5) * 0.85; }
+}
+let Kc = 1.25, orderR = 0, orderPsi = 0;
+document.getElementById('K').addEventListener('input', e => Kc = +e.target.value);
+
+function stepKuramoto(dt) {
+  let sx = 0, sy = 0;
+  for (let i = 0; i < N; i++) { sx += Math.cos(theta[i]); sy += Math.sin(theta[i]); }
+  orderR = Math.hypot(sx, sy) / N; orderPsi = Math.atan2(sy, sx);
+  for (let i = 0; i < N; i++)
+    theta[i] += dt * (omega[i] + Kc * orderR * Math.sin(orderPsi - theta[i]));
+}
+
+/* ---------------- camera with infinite rebasing ---------------------- */
+let cam = { x: 0, y: 0 }, zoom = 1, zoom0 = 1;
+const stack = [];                       // path of descent (child indices)
+let logTotal = 0;                       // log10 of true total magnification
+let ripples = [], pulses = [];
+
+function rebase() {
+  // descend: current root fills far beyond the screen -> promote a child
+  while (zoom > 7 * MIN) {
+    let best = -1, bd = 1e9;
+    for (let i = 0; i < CHILDREN.length; i++) {
+      const c = CHILDREN[i], d = Math.hypot(cam.x - c.p[0], cam.y - c.p[1]);
+      if (d < bd) { bd = d; best = i; }
+    }
+    const c = CHILDREN[best];
+    if (bd > 2.2 * c.s) break;                    // between jewels — allow drift
+    cam.x = (cam.x - c.p[0]) / c.s; cam.y = (cam.y - c.p[1]) / c.s;
+    zoom *= c.s; stack.push(best); logTotal += Math.log10(1 / c.s);
+    ripples = []; pulses.forEach(p => p.t = 2);   // context shifted
+    reseedStars();
+  }
+  // ascend
+  while (zoom < 0.30 * MIN && stack.length) {
+    const c = CHILDREN[stack.pop()];
+    cam.x = cam.x * c.s + c.p[0]; cam.y = cam.y * c.s + c.p[1];
+    zoom /= c.s; logTotal -= Math.log10(1 / c.s);
+    ripples = []; reseedStars();
+  }
+  zoom = Math.min(zoom, 7.5 * MIN);
+  if (!stack.length) zoom = Math.max(zoom, 0.24 * MIN);
+}
+
+/* ---------------- background: night gradient + seeded stars ---------- */
+let bg = null, starSeed = 1;
+function reseedStars() { starSeed = 100 + stack.length * 7919 + (stack[stack.length - 1] || 0); bg = null; }
+function buildBG() {
+  bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+  const b = bg.getContext('2d');
+  const g = b.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, '#0d1226'); g.addColorStop(0.38, '#080b1c');
+  g.addColorStop(0.74, '#04050f'); g.addColorStop(1, '#010107');
+  b.fillStyle = g; b.fillRect(0, 0, W, H);
+  let s = starSeed;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  b.fillStyle = WHITE;
+  for (let i = 0; i < 170; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    b.globalAlpha = 0.04 + rnd() * 0.16;
+    b.beginPath(); b.arc(x, y, (0.6 + rnd() * 1.2) * DPR, 0, TAU); b.fill();
+  }
+  b.globalAlpha = 1;
+}
+
+/* ---------------- drawing one mandala instance ----------------------- */
+let drawCount = 0;
+function drawMandala(x, y, s, depth) {
+  if (drawCount > 420) return;
+  const scale = s * zoom;                                  // px per unit
+  const sx = (x - cam.x) * zoom + W / 2, sy = (y - cam.y) * zoom + H / 2;
+  if (sx + scale < -40 || sx - scale > W + 40 || sy + scale < -40 || sy - scale > H + 40) return;
+  if (scale < 1.6) return;
+  drawCount++;
+
+  ctx.setTransform(scale, 0, 0, scale, sx, sy);
+  const lw = px => px * DPR / scale;
+  const isRoot = depth === 0;
+
+  if (scale < 7 * DPR) {                                   // distant jewel
+    ctx.fillStyle = GOLD; ctx.globalAlpha = 0.75;
+    ctx.beginPath(); ctx.arc(0, 0, 0.5, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1; return;
+  }
+
+  /* rings of protection */
+  ctx.strokeStyle = GOLD;
+  ctx.globalAlpha = 0.55; ctx.lineWidth = lw(2.0); ctx.stroke(pRingOut);
+  ctx.globalAlpha = 0.35; ctx.lineWidth = lw(1.1); ctx.stroke(pRingIn);
+  if (scale > 90 * DPR) {
+    ctx.globalAlpha = 0.28; ctx.lineWidth = lw(0.9);
+    ctx.setLineDash([3 / scale * DPR, 9 / scale * DPR]); ctx.stroke(pVow); ctx.setLineDash([]);
+  }
+
+  /* twelve-pointed star */
+  ctx.globalAlpha = 0.06; ctx.lineWidth = lw(7); ctx.stroke(pStar);
+  ctx.globalAlpha = 0.50; ctx.lineWidth = lw(1.6); ctx.stroke(pStar);
+
+  if (scale > 40 * DPR) {
+    /* ticks — primes brighter */
+    ctx.lineWidth = lw(1.1); ctx.globalAlpha = 0.30; ctx.stroke(pTickMin);
+    ctx.lineWidth = lw(2.4); ctx.globalAlpha = 0.60; ctx.stroke(pTickMaj);
+    ctx.lineWidth = lw(1.6); ctx.globalAlpha = 0.80; ctx.strokeStyle = GOLD_HI; ctx.stroke(pTickPrime);
+    ctx.strokeStyle = GOLD;
+    /* star tip lights */
+    ctx.fillStyle = GOLD;
+    for (const [tx, ty] of STAR_TIPS) {
+      ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(tx, ty, lw(4.2) / 2 + 0.006, 0, TAU); ctx.fill();
+    }
+    /* quiet mid ring */
+    ctx.strokeStyle = VIOLET; ctx.globalAlpha = 0.30; ctx.lineWidth = lw(1.0); ctx.stroke(pMid);
+    ctx.strokeStyle = GOLD_D; ctx.globalAlpha = 0.35; ctx.stroke(pSeal);
+    ctx.strokeStyle = GOLD;
+  }
+  if (scale > 220 * DPR) {
+    ctx.fillStyle = VIOLET; ctx.globalAlpha = 0.06; ctx.fill(pPhyllo);
+    ctx.strokeStyle = VIOLET; ctx.globalAlpha = 0.10; ctx.lineWidth = lw(1.0); ctx.stroke(pFlower);
+    ctx.strokeStyle = GOLD;
+  }
+
+  /* the lattice — all 78 bonds */
+  for (const b of EDGE_BUCKETS) {
+    ctx.globalAlpha = b.a; ctx.lineWidth = lw(b.w); ctx.stroke(b.p);
+  }
+  /* root: bonds between phase-aligned nodes flare — integration made visible */
+  if (isRoot && scale > 60 * DPR) {
+    ctx.strokeStyle = GOLD_HI;
+    for (const e of EDGES) {
+      if (e.a < 0.30) continue;
+      const align = 0.5 + 0.5 * Math.cos(theta[e.i] - theta[e.j]);
+      if (align < 0.55) continue;
+      ctx.globalAlpha = (align - 0.55) * 0.9 * e.a * 1.6;
+      ctx.lineWidth = lw(e.w * 1.3);
+      ctx.beginPath(); ctx.moveTo(NODES[e.i][0], NODES[e.i][1]);
+      ctx.lineTo(NODES[e.j][0], NODES[e.j][1]); ctx.stroke();
+    }
+    ctx.strokeStyle = GOLD;
+  }
+
+  /* seed of life */
+  if (scale > 30 * DPR) {
+    ctx.strokeStyle = TEAL_D; ctx.globalAlpha = 0.10; ctx.lineWidth = lw(6.5); ctx.stroke(pSeed);
+    ctx.strokeStyle = TEAL;   ctx.globalAlpha = 0.75; ctx.lineWidth = lw(1.7); ctx.stroke(pSeed);
+  }
+
+  /* nodes — each a point of awareness, breathing with its phase */
+  ctx.fillStyle = GOLD_HI;
+  for (let i = 1; i < N; i++) {
+    const ph = isRoot ? theta[i] : theta[i] + depth * 1.7 + i * 0.9;
+    const br = 0.45 + 0.5 * (0.5 + 0.5 * Math.sin(ph));
+    ctx.globalAlpha = 0.12 * br;
+    ctx.beginPath(); ctx.arc(NODES[i][0], NODES[i][1], 0.030, 0, TAU); ctx.fill();
+    ctx.globalAlpha = br;
+    ctx.beginPath(); ctx.arc(NODES[i][0], NODES[i][1], lw(5) / 2 + 0.004, 0, TAU); ctx.fill();
+  }
+
+  /* the core — brightens as the many cohere; fades open when entered */
+  if (scale > 26 * DPR) {
+    let coreA = 0.55 + 0.45 * orderR;
+    coreA *= Math.min(1, Math.max(0.10, 1.55 - scale / (0.95 * MIN)));
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.20);
+    g.addColorStop(0, `rgba(255,255,255,${0.95 * coreA})`);
+    g.addColorStop(0.18, `rgba(216,255,251,${0.55 * coreA})`);
+    g.addColorStop(0.5, `rgba(143,227,220,${0.16 * coreA})`);
+    g.addColorStop(1, 'rgba(143,227,220,0)');
+    ctx.globalAlpha = 1; ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 0.20, 0, TAU); ctx.fill();
+    ctx.strokeStyle = TEAL; ctx.globalAlpha = 0.8 * coreA; ctx.lineWidth = lw(1.4);
+    ctx.beginPath(); ctx.arc(0, 0, 0.026, 0, TAU); ctx.stroke();
+    ctx.fillStyle = WHITE; ctx.globalAlpha = coreA;
+    ctx.beginPath(); ctx.arc(0, 0, lw(9) / 2 + 0.002, 0, TAU); ctx.fill();
+    ctx.strokeStyle = GOLD;
+  }
+
+  ctx.globalAlpha = 1;
+
+  /* recurse: each jewel contains the whole net */
+  if (scale > 120 * DPR) {
+    for (const c of CHILDREN) drawMandala(x + c.p[0] * s, y + c.p[1] * s, c.s * s, depth + 1);
+  }
+}
+
+/* ---------------- pulses of signal along root bonds ------------------ */
+function stepPulses(dt) {
+  if (!reduced && pulses.length < 26 && Math.random() < 0.35) {
+    const e = EDGES[(Math.random() * EDGES.length) | 0];
+    if (e.a > 0.18) pulses.push({ e, t: 0, sp: 0.35 + Math.random() * 0.5, dir: Math.random() < 0.5 ? 1 : -1 });
+  }
+  for (const p of pulses) p.t += p.sp * dt;
+  pulses = pulses.filter(p => p.t < 1);
+}
+function drawPulses() {
+  const scale = zoom, sx = -cam.x * zoom + W / 2, sy = -cam.y * zoom + H / 2;
+  if (scale < 60 * DPR || scale > 7 * MIN) return;
+  ctx.setTransform(scale, 0, 0, scale, sx, sy);
+  ctx.fillStyle = GOLD_HI;
+  for (const p of pulses) {
+    const t = p.dir > 0 ? p.t : 1 - p.t;
+    const A = NODES[p.e.i], B = NODES[p.e.j];
+    const x = A[0] + (B[0] - A[0]) * t, y = A[1] + (B[1] - A[1]) * t;
+    const align = 0.5 + 0.5 * Math.cos(theta[p.e.i] - theta[p.e.j]);
+    ctx.globalAlpha = Math.sin(p.t * Math.PI) * (0.25 + 0.6 * align);
+    ctx.beginPath(); ctx.arc(x, y, 3 * DPR / scale + 0.003, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawRipples(dt) {
+  const scale = zoom, sx = -cam.x * zoom + W / 2, sy = -cam.y * zoom + H / 2;
+  ctx.setTransform(scale, 0, 0, scale, sx, sy);
+  ctx.strokeStyle = TEAL;
+  for (const r of ripples) {
+    r.r += dt * 0.55; r.a *= Math.pow(0.25, dt);
+    ctx.globalAlpha = r.a; ctx.lineWidth = 1.6 * DPR / scale;
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+  }
+  ripples = ripples.filter(r => r.a > 0.02);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------------- interaction ---------------------------------------- */
+const ptrs = new Map();
+let lastPinch = 0, lastTapT = 0, lastTapX = 0, lastTapY = 0, moved = 0;
+let anim = null; // {x0,y0,z0,x1,y1,z1,t}
+
+function screenToWorld(px, py) {
+  return [(px * DPR - W / 2) / zoom + cam.x, (py * DPR - H / 2) / zoom + cam.y];
+}
+function zoomAbout(px, py, f) {
+  const [wx, wy] = screenToWorld(px, py);
+  zoom *= f;
+  cam.x = wx - (px * DPR - W / 2) / zoom;
+  cam.y = wy - (py * DPR - H / 2) / zoom;
+  rebase();
+}
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); anim = null;
+  zoomAbout(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0016));
+}, { passive: false });
+
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  moved = 0; anim = null;
+  if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    lastPinch = Math.hypot(a.x - b.x, a.y - b.y);
+  }
+});
+cv.addEventListener('pointermove', e => {
+  const p = ptrs.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  moved += Math.abs(dx) + Math.abs(dy);
+  if (ptrs.size === 1) {
+    cam.x -= dx * DPR / zoom; cam.y -= dy * DPR / zoom;
+  }
+  p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (lastPinch > 0 && d > 0) zoomAbout((a.x + b.x) / 2, (a.y + b.y) / 2, d / lastPinch);
+    lastPinch = d;
+  }
+});
+function endPtr(e) {
+  const wasSingle = ptrs.size === 1;
+  ptrs.delete(e.pointerId); lastPinch = 0;
+  if (wasSingle && moved < 8) {
+    const now = performance.now();
+    const dbl = now - lastTapT < 320 && Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < 30;
+    lastTapT = now; lastTapX = e.clientX; lastTapY = e.clientY;
+    if (dbl) {                                    // double-tap: dive
+      const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+      anim = { x0: cam.x, y0: cam.y, z0: zoom, x1: wx, y1: wy, z1: zoom * 2.6, t: 0 };
+      return;
+    }
+    /* single tap: perturb the nearest node of awareness */
+    const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+    let best = -1, bd = 1e9;
+    for (let i = 0; i < N; i++) {
+      const d = Math.hypot(wx - NODES[i][0], wy - NODES[i][1]);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (bd < 0.09 && zoom > 60 * DPR) {
+      theta[best] += Math.PI * (0.75 + Math.random() * 0.5);
+      ripples.push({ x: NODES[best][0], y: NODES[best][1], r: 0.02, a: 0.8 });
+    }
+  }
+}
+cv.addEventListener('pointerup', endPtr);
+cv.addEventListener('pointercancel', endPtr);
+
+document.getElementById('reset').onclick = () => {
+  stack.length = 0; logTotal = 0; cam.x = 0; cam.y = 0; zoom = zoom0;
+  ripples = []; pulses = []; reseedStars();
+};
+document.getElementById('info').onclick = () => {
+  const l = document.getElementById('legend');
+  l.style.display = l.style.display === 'block' ? 'none' : 'block';
+};
+
+/* ---------------- boot / loop ----------------------------------------- */
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function resize() {
+  DPR = Math.min(2, devicePixelRatio || 1);
+  W = cv.width = innerWidth * DPR; H = cv.height = innerHeight * DPR;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  MIN = Math.min(W, H);
+  const zr = zoom / (zoom0 || 1);
+  zoom0 = MIN * 0.465; zoom = zoom0 * (zr || 1);
+  bg = null;
+}
+addEventListener('resize', resize); resize();
+
+const hD = document.getElementById('hDepth'), hZ = document.getElementById('hZoom'),
+      hR = document.getElementById('hR'), hF = document.getElementById('cohfill');
+let hudT = 0;
+
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (reduced) dt = 0;
+
+  if (anim) {
+    anim.t = Math.min(1, anim.t + (now - last + dt * 1000) / 420 * dt * 20 + 0.045);
+    const e = 1 - Math.pow(1 - anim.t, 3);
+    cam.x = anim.x0 + (anim.x1 - anim.x0) * e;
+    cam.y = anim.y0 + (anim.y1 - anim.y0) * e;
+    zoom = anim.z0 * Math.pow(anim.z1 / anim.z0, e);
+    if (anim.t >= 1) anim = null;
+    rebase();
+  }
+
+  stepKuramoto(dt);
+  stepPulses(dt);
+
+  if (!bg) buildBG();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(bg, 0, 0);
+
+  drawCount = 0;
+  drawMandala(0, 0, 1, 0);
+  drawPulses();
+  drawRipples(dt);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  hudT += dt || 0.016;
+  if (hudT > 0.2) {
+    hudT = 0;
+    hD.textContent = stack.length;
+    const lz = logTotal + Math.log10(zoom / zoom0);
+    hZ.textContent = lz < 3 ? '×' + Math.pow(10, lz).toFixed(lz < 1 ? 2 : 1)
+                            : '×10^' + lz.toFixed(1);
+    hR.textContent = orderR.toFixed(2);
+    hF.style.width = (orderR * 100).toFixed(0) + '%';
+  }
+}
+requestAnimationFrame(frame);
+
+/* fade the hint */
+setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
+setTimeout(() => { document.getElementById('title').style.opacity = 0.35; }, 14000);
+</script>
+</body>
+</html>
